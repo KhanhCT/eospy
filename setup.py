@@ -12,7 +12,7 @@ with open(os.path.join(here, 'eospy', '__version__.py'), 'r') as f:
     exec(f.read(), about)
 
 setup(
-    name='libeospy',
+    name='eospy',
     version=os.getenv('BUILD_VERSION', about['__version__']),
     description='Python library for the eos.io REST API',
     long_description=long_description,
