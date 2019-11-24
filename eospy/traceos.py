@@ -12,14 +12,12 @@ class Traceos :
         ''' '''
         cmd = eval('self._dynurl.{0}'.format(func))
         url = cmd.create_url()
-        print(url)
         return cmd.get_url(url, **kwargs)
 
     def post(self, func='', **kwargs) :
         ''' '''
         cmd = eval('self._dynurl.{0}'.format(func))
         url = cmd.create_url()
-        print(url)
         return cmd.post_url(url, **kwargs)
 
     def get_transaction(self, trx_id):
