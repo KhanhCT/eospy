@@ -5,19 +5,23 @@
 from .dynamic_url import DynamicUrl
 from .keys import EOSKey, check_wif
 from .signer import Signer
+from .keosd import Keosd
 from .utils import sig_digest, parse_key_file, sha256
 from .types import EOSEncoder, Transaction, PackedTransaction, Abi
 from .exceptions import (EOSKeyError, EOSMsigInvalidProposal, EOSSetSameAbi, EOSSetSameCode)
 import json
 import os
 from binascii import hexlify
+import datetime as dt
 
 class Cleos :
     
-    def __init__(self, url='http://localhost:8888', version='v1') :
+    def __init__(self, url='http://localhost:8888', keosd_url = None, version='v1') :
         ''' '''
         self._prod_url = url
         self._version = version
+        self._keosd_url = keosd_url
+        self._keosd = Keosd(url=self._keosd_url)
         self._dynurl = DynamicUrl(url=self._prod_url, version=self._version)
     
     #####
@@ -160,6 +164,7 @@ class Cleos :
             trx = {"actions": [payload]}
             sign_key = EOSKey(key)
             return self.push_transaction(trx, sign_key, broadcast=broadcast)
+    
 
 
     def set_code(self, account, permission, code_file, key, broadcast=True, timeout=30):
@@ -195,32 +200,83 @@ class Cleos :
             trx = {"actions": [payload]}
             sign_key = EOSKey(key)
             return self.push_transaction(trx, sign_key, broadcast=broadcast)
+    
+    def lock_wallet(self, wallet_name, timeout=30):
+        try:
+            return self._keosd.lock_wallet(wallet_name=wallet_name, timeout=timeout)
+        except:
+            pass
+    
+    def unlock_wallet(self, wallet_name, password, timeout=30):
+        try:
+            return self._keosd.unlock_wallet(wallet_name=wallet_name, password=password, timeout=timeout)
+        except Exception as ex:
+            print("Wallet is already unlocked!")
+            pass
         
-
     #####
     # transactions
     #####
     def push_transaction(self, transaction, keys, broadcast=True, compression='none', timeout=30):
         ''' parameter keys can be a list of WIF strings or EOSKey objects or a filename to key file'''
         chain_info,lib_info = self.get_chain_lib_info()
+
         trx = Transaction(transaction, chain_info, lib_info)
         #encoded = trx.encode()
-        digest = sig_digest(trx.encode(), chain_info['chain_id'])
         # sign the transaction
         signatures = []
         # if os.path.isfile(keys):
         #      keys = parse_key_file(keys, first_key=False)
+
+        digest = sig_digest(trx.encode(), chain_info['chain_id'])
         if not isinstance(keys, list):
-            if not isinstance(keys, Signer):
+            if isinstance(keys, Signer):
+                pass
+            elif isinstance(keys, str):
+                pass
+            else:
                 raise EOSKeyError('Must pass a class that extends the eospy.Signer class')
             keys = [keys]
+        pub_keys = []
 
         for key in keys :
-            # if check_wif(key) :
-            #     k = EOSKey(key)
-            if not isinstance(key, Signer) :
-                raise EOSKeyError('Must pass a class that extends the eospy.Signer class')               
-            signatures.append(key.sign(digest))
+            if isinstance(key, str):
+                try :
+                    k = EOSKey(key)
+                    signatures.append(k.sign(digest))
+                except Exception as ex:
+                    # public key
+                    pub_keys.append(key)
+            elif isinstance(key, Signer) :
+                signatures.append(key.sign(digest))
+            else:
+                raise EOSKeyError('Must pass a class that extends the eospy.Signer class')
+        
+        if len(signatures) == 0:
+            # sign transaction:
+            import copy
+            trx_data = copy.deepcopy(transaction)
+
+            if 'expiration' not in trx_data :
+                trx_data['expiration'] = str((dt.datetime.utcnow() + dt.timedelta(seconds=30)).replace(tzinfo=pytz.UTC))
+            if 'ref_block_num' not in trx_data :
+                trx_data['ref_block_num'] = chain_info['last_irreversible_block_num'] & 0xFFFF
+            if 'ref_block_prefix' not in trx_data :
+                trx_data['ref_block_prefix'] = lib_info['ref_block_prefix']
+            if 'signatures' not in trx_data :
+                trx_data['signatures'] = []
+            sign_data = [
+                trx_data,
+                pub_keys,
+                chain_info['chain_id']
+            ]
+            
+            # data = ','.join(str(e) for e in sign_data)
+            # sign_data="'[{}]'".format(data)
+            # print(sign_data)
+            signed_data = self._keosd.sign(sign_data=sign_data, timeout=30)
+            if 'signatures' in signed_data:
+                signatures = signed_data['signatures']
         # build final trx
         final_trx = {
                 'compression' : compression,
@@ -228,6 +284,7 @@ class Cleos :
                 'signatures' : signatures
         }
         data = json.dumps(final_trx, cls=EOSEncoder)
+        print(data)
         if broadcast :
             return self.post('chain.push_transaction', params=None, data=data, timeout=timeout)
         return data
