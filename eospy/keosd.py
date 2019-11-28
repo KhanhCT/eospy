@@ -18,7 +18,6 @@ class Keosd :
         ''' '''
         cmd = eval('self._dynurl.{0}'.format(func))
         url = cmd.create_url()
-        print(url)
         return cmd.post_url(url, **kwargs)
     
     def unlock_wallet(self, wallet_name, password, timeout):

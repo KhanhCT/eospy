@@ -13,6 +13,7 @@ import json
 import os
 from binascii import hexlify
 import datetime as dt
+import copy
 
 class Cleos :
     
@@ -217,10 +218,18 @@ class Cleos :
     #####
     # transactions
     #####
-    def push_transaction(self, transaction, keys, broadcast=True, compression='none', timeout=30):
+    def push_transaction(self, transaction, keys, broadcast=True, compression='none', timeout=60):
         ''' parameter keys can be a list of WIF strings or EOSKey objects or a filename to key file'''
         chain_info,lib_info = self.get_chain_lib_info()
 
+        if 'expiration' not in transaction :
+            transaction['expiration'] = str((dt.datetime.utcnow() + dt.timedelta(seconds=30)).replace(tzinfo=pytz.UTC))
+        if 'ref_block_num' not in transaction :
+            transaction['ref_block_num'] = chain_info['last_irreversible_block_num'] & 0xFFFF
+        if 'ref_block_prefix' not in transaction :
+            transaction['ref_block_prefix'] = lib_info['ref_block_prefix']
+        trx_data = copy.deepcopy(transaction)
+        transaction['expiration'] = str(transaction['expiration'])
         trx = Transaction(transaction, chain_info, lib_info)
         #encoded = trx.encode()
         # sign the transaction
@@ -254,26 +263,18 @@ class Cleos :
         
         if len(signatures) == 0:
             # sign transaction:
-            import copy
-            trx_data = copy.deepcopy(transaction)
-
-            if 'expiration' not in trx_data :
-                trx_data['expiration'] = str((dt.datetime.utcnow() + dt.timedelta(seconds=30)).replace(tzinfo=pytz.UTC))
-            if 'ref_block_num' not in trx_data :
-                trx_data['ref_block_num'] = chain_info['last_irreversible_block_num'] & 0xFFFF
-            if 'ref_block_prefix' not in trx_data :
-                trx_data['ref_block_prefix'] = lib_info['ref_block_prefix']
             if 'signatures' not in trx_data :
                 trx_data['signatures'] = []
+            import pytz
+            utc_time = trx_data['expiration'].astimezone(pytz.UTC)
+            trx_data['expiration']=str(utc_time.strftime("%Y-%m-%dT%H:%M:%S.%f"))
             sign_data = [
                 trx_data,
                 pub_keys,
                 chain_info['chain_id']
             ]
-            
             # data = ','.join(str(e) for e in sign_data)
             # sign_data="'[{}]'".format(data)
-            # print(sign_data)
             signed_data = self._keosd.sign(sign_data=sign_data, timeout=30)
             if 'signatures' in signed_data:
                 signatures = signed_data['signatures']
@@ -284,7 +285,6 @@ class Cleos :
                 'signatures' : signatures
         }
         data = json.dumps(final_trx, cls=EOSEncoder)
-        print(data)
         if broadcast :
             return self.post('chain.push_transaction', params=None, data=data, timeout=timeout)
         return data
